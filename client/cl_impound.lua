@@ -1,3 +1,5 @@
+-- ESX VERSION - client/cl_impound.lua
+ESX = exports["es_extended"]:getSharedObject()
 local currentGarage = 1
 
 local function doCarDamage(currentVehicle, veh)
@@ -46,18 +48,37 @@ end
 local function TakeOutImpound(vehicle)
     local coords = Config.ImpoundLocations[currentGarage]
     if coords then
-        QBCore.Functions.SpawnVehicle(vehicle.vehicle, function(veh)
-            QBCore.Functions.TriggerCallback('qb-garage:server:GetVehicleProperties', function(properties)
-                QBCore.Functions.SetVehicleProperties(veh, properties)
+        -- ESX vehicle spawning system
+        ESX.Game.SpawnVehicle(vehicle.vehicle, coords, coords.w, function(veh)
+            -- Get vehicle properties for ESX
+            ESX.TriggerServerCallback('esx_vehicleshop:getVehicleProperties', function(properties)
+                if properties then
+                    ESX.Game.SetVehicleProperties(veh, properties)
+                end
+                
                 SetVehicleNumberPlateText(veh, vehicle.plate)
                 SetEntityHeading(veh, coords.w)
-                exports[Config.Fuel]:SetFuel(veh, vehicle.fuel)
+                
+                -- Set fuel based on your fuel system
+                if GetResourceState(Config.Fuel) == 'started' then
+                    exports[Config.Fuel]:SetFuel(veh, vehicle.fuel or 100)
+                end
+                
                 doCarDamage(veh, vehicle)
-                TriggerServerEvent('police:server:TakeOutImpound',vehicle.plate)
-                TriggerEvent("vehiclekeys:client:SetOwner", QBCore.Functions.GetPlate(veh))
+                TriggerServerEvent('police:server:TakeOutImpound', vehicle.plate)
+                
+                -- ESX vehicle keys system (adjust based on your key system)
+                if GetResourceState('esx_vehiclelock') == 'started' then
+                    TriggerEvent('esx_vehiclelock:giveKey', veh)
+                elseif GetResourceState('wasabi_carlock') == 'started' then
+                    exports.wasabi_carlock:GiveKey(GetVehicleNumberPlateText(veh))
+                elseif GetResourceState('cd_garage') == 'started' then
+                    TriggerEvent('cd_garage:AddKeys', exports['cd_garage']:GetPlate(veh))
+                end
+                
                 SetVehicleEngineOn(veh, true, true)
             end, vehicle.plate)
-        end, coords, true)
+        end)
     end
 end
 
@@ -65,11 +86,39 @@ RegisterNetEvent('ps-mdt:client:TakeOutImpound', function(data)
     local pos = GetEntityCoords(PlayerPedId())
     currentGarage = data.currentSelection
     local takeDist = Config.ImpoundLocations[data.currentSelection]
-    takeDist = vector3(takeDist.x, takeDist.y,  takeDist.z)
+    takeDist = vector3(takeDist.x, takeDist.y, takeDist.z)
     if #(pos - takeDist) <= 15.0 then
-        local vehicle = data.vehicle
         TakeOutImpound(data)
     else
-        QBCore.Functions.Notify("You are too far away from the impound location!")
+        ESX.ShowNotification("You are too far away from the impound location!")
+    end
+end)
+
+RegisterNetEvent('mdt:client:getImpoundVehicles', function(vehicles)
+    SendNUIMessage({
+        type = "getImpoundVehicles",
+        data = vehicles
+    })
+end)
+
+RegisterNetEvent('mdt:client:statusImpound', function(data, plate)
+    SendNUIMessage({
+        type = "statusImpound", 
+        data = data,
+        plate = plate
+    })
+end)
+
+-- ESX specific impound handling
+RegisterNetEvent('mdt:client:impoundVehicle', function(data)
+    local playerPed = PlayerPedId()
+    local coords = GetEntityCoords(playerPed)
+    local vehicle = GetClosestVehicle(coords, 5.0, 0, 71)
+    
+    if vehicle ~= 0 then
+        local plate = GetVehicleNumberPlateText(vehicle)
+        TriggerServerEvent('mdt:server:impoundVehicle', data, VehToNet(vehicle))
+    else
+        ESX.ShowNotification("No vehicle found nearby!")
     end
 end)

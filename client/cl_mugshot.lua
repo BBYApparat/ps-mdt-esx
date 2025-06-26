@@ -1,23 +1,24 @@
-QBCore = exports['qb-core']:GetCoreObject()
+-- ESX VERSION - client/cl_mugshot.lua
+ESX = exports["es_extended"]:getSharedObject()
 local PlayerData = {}
 local mugshotInProgress, createdCamera, MugshotArray, playerData = false, 0, {}, nil
 local handle, board, board_scaleform, overlay, ped, pedcoords, x, y, z, r, suspectheading, suspectx, suspecty, suspectz, board_pos
 local MugShots = {}
 
--- Mugshot location  ( Position is the default QBCore Prison Interior )
-	x = 1828.69
-    y = 2581.72
-    z = 46.3
-    r = {x = 0.0, y = 0.0, z = 92.23}
-    suspectheading = 265.00
-    suspectx = 1827.63
-    suspecty = 2581.7
-    suspectz = 44.89
-	
+-- Mugshot location (Position is the default ESX Prison Interior)
+x = 1828.69
+y = 2581.72
+z = 46.3
+r = {x = 0.0, y = 0.0, z = 92.23}
+suspectheading = 265.00
+suspectx = 1827.63
+suspecty = 2581.7
+suspectz = 44.89
+
 -- Mugshot functions
 
 local function TakeMugShot()
-    QBCore.Functions.TriggerCallback('ps-mdt:server:MugShotWebhook', function(MugShotWebhook)
+    ESX.TriggerServerCallback('ps-mdt:server:MugShotWebhook', function(MugShotWebhook)
         exports['screenshot-basic']:requestScreenshotUpload(MugShotWebhook, 'files[]', {encoding = 'jpg'}, function(data)
             local resp = json.decode(data)
             table.insert(MugshotArray, resp.attachments[1].url)
@@ -74,7 +75,7 @@ local function CreateNamedRenderTargetForModel(name, model)
 	return handle
 end
 
-local function LoadScaleform (scaleform)
+local function LoadScaleform(scaleform)
 	local handle = RequestScaleformMovie(scaleform)
 	if handle ~= 0 then
 		while not HasScaleformMovieLoaded(handle) do
@@ -84,7 +85,7 @@ local function LoadScaleform (scaleform)
 	return handle
 end
 
-local function CallScaleformMethod (scaleform, method, ...)
+local function CallScaleformMethod(scaleform, method, ...)
 	local t
 	local args = { ... }
 	BeginScaleformMovieMethod(scaleform, method)
@@ -126,9 +127,9 @@ end
 
 local function MakeBoard()
     title = "Bolingbroke Penitentiary"
-    center = playerData.charinfo.firstname.. " ".. playerData.charinfo.lastname
-    footer = playerData.citizenid
-    header = playerData.charinfo.birthdate
+    center = playerData.firstName.. " ".. playerData.lastName
+    footer = playerData.identifier
+    header = playerData.dateofbirth
 	CallScaleformMethod(board_scaleform, 'SET_BOARD', title, center, footer, header, 0, 1337, 116)
 end
 
@@ -165,11 +166,17 @@ RegisterNetEvent('cqc-mugshot:client:trigger', function()
     ped = PlayerPedId()
     pedcoords = GetEntityCoords(ped)
     CreateThread(function()
-        playerData = QBCore.Functions.GetPlayerData()
+        playerData = ESX.GetPlayerData()
         MugshotArray, mugshotInProgress = {}, true
-        local citizenid = playerData.citizenid
+        local identifier = playerData.identifier
         local animDict = 'mp_character_creation@lineup@male_a'
-        QBCore.Functions.RequestAnimDict(animDict)
+        
+        -- Request animation dictionary
+        RequestAnimDict(animDict)
+        while not HasAnimDictLoaded(animDict) do
+            Wait(0)
+        end
+        
         PrepBoard()
         Wait(250)
         MakeBoard()
@@ -184,32 +191,33 @@ RegisterNetEvent('cqc-mugshot:client:trigger', function()
             SetEntityHeading(ped, suspectheading)
             ClearPedSecondaryTask(GetPlayerPed(ped))
         end
-           TriggerServerEvent('psmdt-mugshot:server:MDTupload', playerData.citizenid, MugshotArray)
+        TriggerServerEvent('psmdt-mugshot:server:MDTupload', playerData.identifier, MugshotArray)
         mugshotInProgress = false
     end)
 end)
 
 RegisterNUICallback("sendToJail", function(data, cb)
-    QBCore.Functions.TriggerCallback('ps-mdt:server:MugShotWebhook', function(MugShotWebhook)
+    ESX.TriggerServerCallback('ps-mdt:server:MugShotWebhook', function(MugShotWebhook)
         if MugShotWebhook ~= '' then
             local citizenId, sentence = data.citizenId, data.sentence
 
-            -- Gets the player id from the citizenId
+            -- Gets the player id from the identifier
             local p = promise.new()
-            QBCore.Functions.TriggerCallback('mdt:server:GetPlayerSourceId', function(result)
+            ESX.TriggerServerCallback('mdt:server:GetPlayerSourceId', function(result)
                 p:resolve(result)
             end, citizenId)
         
             local targetSourceId = Citizen.Await(p)
         
             if sentence > 0 then
-                if Config.UseCQCMugshot    then
+                if Config.UseCQCMugshot then
                     TriggerServerEvent('cqc-mugshot:server:triggerSuspect', targetSourceId)
                 end
                 Citizen.Wait(5000)
-                -- Uses qb-policejob JailPlayer event
-                TriggerServerEvent("police:server:JailPlayer", targetSourceId, sentence)
+                -- Uses esx_jailer or your preferred jail system
+                TriggerServerEvent("esx_jailer:sendToJail", targetSourceId, sentence)
             end
         end
     end)
+    cb(true)
 end)
