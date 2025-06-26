@@ -1,4 +1,4 @@
--- ESX VERSION - Complete server/main.lua
+-- ESX VERSION - Complete server/main.lua (Full Version)
 ESX = exports["es_extended"]:getSharedObject()
 
 local incidents = {}
@@ -80,6 +80,47 @@ function format_time(seconds)
     local minutes = math.floor((seconds % 3600) / 60)
     local secs = seconds % 60
     return string.format("%02d:%02d:%02d", hours, minutes, secs)
+end
+
+function GetBoloStatus(plate)
+    local result = MySQL.query.await("SELECT * FROM mdt_bolos where plate = @plate", {['@plate'] = plate})
+	if result and result[1] then
+		local title = result[1]['title']
+		local boloId = result[1]['id']
+		return true, title, boloId
+	end
+	return false
+end
+
+function GetWarrantStatus(plate)
+    local result = MySQL.query.await("SELECT ov.plate, ov.owner, m.id FROM owned_vehicles ov INNER JOIN mdt_convictions m ON ov.owner = m.cid WHERE m.warrant =1 AND ov.plate =?", {plate})
+	if result and result[1] then
+		local identifier = result[1]['owner']
+		local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
+		local owner = xPlayer and (xPlayer.variables.firstName.." "..xPlayer.variables.lastName) or GetNameFromId(identifier)
+		local incidentId = result[1]['id']
+		return true, owner, incidentId
+	end
+	return false
+end
+
+function GetVehicleInformation(plate)
+	local result = MySQL.query.await('SELECT * FROM mdt_vehicleinfo WHERE plate = @plate', {['@plate'] = plate})
+    if result[1] then
+        return result[1]
+    else
+        return false
+    end
+end
+
+function GetVehicleOwner(plate)
+	local result = MySQL.query.await('SELECT plate, owner FROM owned_vehicles WHERE plate = @plate', {['@plate'] = plate})
+	if result and result[1] then
+		local identifier = result[1]['owner']
+		local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
+		local owner = xPlayer and (xPlayer.variables.firstName.." "..xPlayer.variables.lastName) or GetNameFromId(identifier)
+		return owner
+	end
 end
 
 if Config.UseWolfknightRadar == true then
@@ -242,6 +283,44 @@ RegisterNetEvent("ps-mdt:server:ClockSystem", function()
             end
         end
     end
+end)
+
+-- Returns the source for the given identifier
+ESX.RegisterServerCallback('mdt:server:GetPlayerSourceId', function(source, cb, targetIdentifier)
+    local targetPlayer = ESX.GetPlayerFromIdentifier(targetIdentifier)
+    if targetPlayer == nil then 
+        TriggerClientEvent('esx:showNotification', source, "Citizen seems Asleep / Missing")
+        return
+    end
+    local targetSource = targetPlayer.source
+    cb(targetSource)
+end)
+
+ESX.RegisterServerCallback('mdt:server:GetProfPic', function(source, cb, sentIdentifier, JobType)
+	local result = MySQL.query.await('SELECT pfp FROM `mdt_data` WHERE cid = ? AND jobtype = ? LIMIT 1', { sentIdentifier, JobType })
+	if result and result[1] then
+		cb(result[1]['pfp'])
+	else
+		cb(nil)
+	end
+end)
+
+ESX.RegisterServerCallback('mdt:server:GetActiveUnits', function(source, cb)
+	cb(activeUnits)
+end)
+
+ESX.RegisterServerCallback('mdt:server:SearchCalls', function(source, cb, sentData)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	local JobType = GetJobType(xPlayer.job.name)
+	if JobType == 'police' or JobType == 'ambulance' then
+		if GetResourceState('ps-dispatch') == 'started' then
+			local calls = exports['ps-dispatch']:GetDispatchCalls()
+			cb(calls)
+		else
+			cb({})
+		end
+	end
 end)
 
 RegisterNetEvent('mdt:server:callDragAttach', function(callid, identifier)
@@ -449,6 +528,25 @@ RegisterNetEvent('mdt:server:getVehicleData', function(plate)
 	end
 end)
 
+RegisterNetEvent('mdt:server:saveVehicleInfo', function(dbid, plate, imageurl, notes, stolen, code5, impoundInfo, points)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if GetJobType(xPlayer.job.name) == 'police' then
+		if dbid == 0 then
+			local id = MySQL.insert.await('INSERT INTO `mdt_vehicleinfo` (`plate`, `imageurl`, `notes`, `stolen`, `code5`, `points`) VALUES (?, ?, ?, ?, ?, ?)', {
+				plate, imageurl, notes, stolen, code5, points
+			})
+			TriggerClientEvent('mdt:client:updateVehicleDbId', src, id)
+			AddLog("A new vehicle info for: "..plate.." was created by " .. GetNameFromPlayerData(xPlayer) .. ".")
+		else
+			local affectedRows = MySQL.update.await('UPDATE `mdt_vehicleinfo` SET `imageurl` = ?, `notes` = ?, `stolen` = ?, `code5` = ?, `points` = ? WHERE `plate` = ?', {
+				imageurl, notes, stolen, code5, points, plate
+			})
+			AddLog("Vehicle info for: "..plate.." was updated by " .. GetNameFromPlayerData(xPlayer) .. ".")
+		end
+	end
+end)
+
 ESX.RegisterServerCallback('mdt:server:searchPeople', function(source, cb, sentData)
 	if not sentData then return cb({}) end
 	local src = source
@@ -590,6 +688,18 @@ ESX.RegisterServerCallback('mdt:server:searchIncidents', function(source, cb, qu
 	end
 end)
 
+ESX.RegisterServerCallback('mdt:server:getAllIncidents', function(source, cb)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	local JobType = GetJobType(xPlayer.job.name)
+	if JobType == 'police' or JobType == 'doj' then
+		local matches = MySQL.query.await("SELECT * FROM `mdt_incidents` ORDER BY `id` DESC LIMIT 30")
+		cb(matches)
+	else
+		cb({})
+	end
+end)
+
 RegisterNetEvent('mdt:server:getIncidentData', function(sentId)
 	if sentId then
 		local src = source
@@ -648,6 +758,24 @@ RegisterNetEvent('mdt:server:searchBolos', function(sentSearch)
 			})
 			TriggerClientEvent('mdt:client:getBolos', src, matches)
 		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:getBoloData', function(sentId)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	local JobType = GetJobType(xPlayer.job.name)
+	if JobType == 'police' or JobType == 'ambulance' then
+		local matches = MySQL.query.await("SELECT * FROM `mdt_bolos` WHERE `id` = :id AND jobtype = :jobtype", {
+			id = sentId,
+			jobtype = JobType
+		})
+		if matches[1] then
+			matches[1]['tags'] = json.decode(matches[1]['tags'])
+			matches[1]['officers'] = json.decode(matches[1]['officers'])
+			matches[1]['gallery'] = json.decode(matches[1]['gallery'])
+		end
+		TriggerClientEvent('mdt:client:getBoloData', src, matches)
 	end
 end)
 
@@ -738,6 +866,41 @@ ESX.RegisterServerCallback('mdt:server:searchWeapons', function(source, cb, sent
 	end
 end)
 
+RegisterNetEvent('mdt:server:getWeaponData', function(serial)
+	if serial then
+		local src = source
+		local xPlayer = ESX.GetPlayerFromId(src)
+		if xPlayer then
+			local JobType = GetJobType(xPlayer.job.name)
+			if JobType == 'police' or JobType == 'doj' then
+				local weapon = MySQL.query.await("SELECT * FROM `mdt_weaponinfo` WHERE `serial` = :serial", {
+					serial = serial
+				})
+				TriggerClientEvent('mdt:client:getWeaponData', src, weapon)
+			end
+		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:saveWeaponInfo', function(dbid, serial, imageurl, notes, owner, weapClass, weapModel)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if GetJobType(xPlayer.job.name) == 'police' then
+		if dbid == 0 then
+			local id = MySQL.insert.await('INSERT INTO `mdt_weaponinfo` (`serial`, `imageurl`, `notes`, `owner`, `weapClass`, `weapModel`) VALUES (?, ?, ?, ?, ?, ?)', {
+				serial, imageurl, notes, owner, weapClass, weapModel
+			})
+			TriggerClientEvent('mdt:client:updateWeaponDbId', src, id)
+			AddLog("A new weapon with serial: "..serial.." was created by " .. GetNameFromPlayerData(xPlayer) .. ".")
+		else
+			local affectedRows = MySQL.update.await('UPDATE `mdt_weaponinfo` SET `imageurl` = ?, `notes` = ?, `owner` = ?, `weapClass` = ?, `weapModel` = ? WHERE `serial` = ?', {
+				imageurl, notes, owner, weapClass, weapModel, serial
+			})
+			AddLog("Weapon with serial: "..serial.." was updated by " .. GetNameFromPlayerData(xPlayer) .. ".")
+		end
+	end
+end)
+
 RegisterNetEvent('mdt:server:getAllLogs', function()
 	local src = source
 	local xPlayer = ESX.GetPlayerFromId(src)
@@ -803,6 +966,26 @@ RegisterNetEvent('mdt:server:incidentSearchPerson', function(identifier)
 			query = identifier
 		})
 		TriggerClientEvent('mdt:client:incidentSearchPerson', src, matches)
+	end
+end)
+
+RegisterNetEvent('mdt:server:removeIncidentCriminal', function(id, identifier)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if GetJobType(xPlayer.job.name) == 'police' then
+		local data = MySQL.single.await('SELECT * FROM `mdt_incidents` WHERE `id` = :id', { id = id })
+		if data then
+			local civsinvolved = json.decode(data['civsinvolved'])
+			for k, v in pairs(civsinvolved) do
+				if v['cid'] == identifier then
+					table.remove(civsinvolved, k)
+					break
+				end
+			end
+			MySQL.update.await('UPDATE `mdt_incidents` SET `civsinvolved` = ? WHERE `id` = ?', {
+				json.encode(civsinvolved), id
+			})
+		end
 	end
 end)
 
@@ -902,9 +1085,258 @@ RegisterNetEvent('mdt:server:registerweapon', function(serial, imageurl, notes, 
 	end
 end)
 
+-- Reports System
+ESX.RegisterServerCallback('mdt:server:getAllReports', function(source, cb)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	local JobType = GetJobType(xPlayer.job.name)
+	if JobType == 'police' or JobType == 'doj' then
+		local matches = MySQL.query.await("SELECT * FROM `mdt_reports` ORDER BY `id` DESC LIMIT 30")
+		cb(matches)
+	else
+		cb({})
+	end
+end)
+
+ESX.RegisterServerCallback('mdt:server:searchReports', function(source, cb, query)
+	if query then
+		local src = source
+		local xPlayer = ESX.GetPlayerFromId(src)
+		if xPlayer then
+			local JobType = GetJobType(xPlayer.job.name)
+			if JobType == 'police' or JobType == 'doj' then
+				local matches = MySQL.query.await("SELECT * FROM `mdt_reports` WHERE LOWER(`title`) LIKE :query OR LOWER(`id`) LIKE :query ORDER BY `id` DESC LIMIT 50", {
+					query = string.lower('%'..query..'%')
+				})
+				cb(matches)
+			end
+		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:getReportData', function(sentId)
+	if sentId then
+		local src = source
+		local xPlayer = ESX.GetPlayerFromId(src)
+		if xPlayer then
+			local JobType = GetJobType(xPlayer.job.name)
+			if JobType == 'police' or JobType == 'doj' then
+				local matches = MySQL.query.await("SELECT * FROM `mdt_reports` WHERE `id` = :id", {
+					id = sentId
+				})
+				local data = matches[1]
+				if data then
+					data['tags'] = json.decode(data['tags'])
+					data['officersinvolved'] = json.decode(data['officersinvolved'])
+					data['civsinvolved'] = json.decode(data['civsinvolved'])
+					data['gallery'] = json.decode(data['gallery'])
+				end
+				TriggerClientEvent('mdt:client:getReportData', src, data)
+			end
+		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:newReport', function(existing, id, title, reporttype, details, tags, gallery, officers, civilians, time)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	local JobType = GetJobType(xPlayer.job.name)
+	if JobType == 'police' or JobType == 'ambulance' or JobType == 'doj' then
+		if existing then
+			local affectedRows = MySQL.update.await('UPDATE `mdt_reports` SET `title` = ?, `type` = ?, `details` = ?, `tags` = ?, `gallery` = ?, `officers` = ?, `civilians` = ?, `time` = ? WHERE `id` = ?', {
+				title, reporttype, details, json.encode(tags), json.encode(gallery), json.encode(officers), json.encode(civilians), time, id
+			})
+			TriggerClientEvent('mdt:client:updateReportId', src, id)
+			AddLog("Report with ID: "..id.." was updated by " .. GetNameFromPlayerData(xPlayer) .. ".")
+		else
+			local fullname = xPlayer.variables.firstName .. " " .. xPlayer.variables.lastName
+			local id = MySQL.insert.await('INSERT INTO `mdt_reports` (`title`, `type`, `details`, `tags`, `gallery`, `officers`, `civilians`, `time`, `author`, `jobtype`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', {
+				title, reporttype, details, json.encode(tags), json.encode(gallery), json.encode(officers), json.encode(civilians), time, fullname, JobType
+			})
+			TriggerClientEvent('mdt:client:updateReportId', src, id)
+			AddLog("A new report with ID: "..id.." was created by " .. GetNameFromPlayerData(xPlayer) .. ".")
+		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:deleteReport', function(id)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	local JobType = GetJobType(xPlayer.job.name)
+	if JobType == 'police' or JobType == 'doj' then
+		MySQL.query.await('DELETE FROM `mdt_reports` WHERE `id` = ?', {id})
+		AddLog("Report with ID: "..id.." was deleted by " .. GetNameFromPlayerData(xPlayer) .. ".")
+	end
+end)
+
+-- Impound System
+local function isRequestVehicle(vehId)
+	local found = false
+	for i=1, #impound do
+		if impound[i]['vehicle'] == vehId then
+			found = true
+			impound[i] = nil
+			break
+		end
+	end
+	return found
+end
+exports('isRequestVehicle', isRequestVehicle)
+
+RegisterNetEvent('mdt:server:impoundVehicle', function(sentInfo, sentVehicle)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if xPlayer then
+		if GetJobType(xPlayer.job.name) == 'police' then
+			if sentInfo and type(sentInfo) == 'table' then
+				local plate, linkedreport, fee, time = sentInfo['plate'], sentInfo['linkedreport'], sentInfo['fee'], sentInfo['time']
+				if (plate and linkedreport and fee and time) then
+				local vehicle = MySQL.query.await("SELECT plate FROM `owned_vehicles` WHERE plate=:plate LIMIT 1", { plate = string.gsub(plate, "^%s*(.-)%s*$", "%1") })
+					if vehicle and vehicle[1] then
+						local data = vehicle[1]
+						MySQL.insert('INSERT INTO `mdt_impound` (`plate`, `linkedreport`, `fee`, `time`) VALUES (:plate, :linkedreport, :fee, :time)', {
+							plate = data['plate'],
+							linkedreport = linkedreport,
+							fee = fee,
+							time = os.time() + (time * 60)
+						}, function(res)
+							local data = {
+								plate = plate,
+								beingcollected = 0,
+								vehicle = sentVehicle,
+								officer = xPlayer.variables.firstName.. " "..xPlayer.variables.lastName,
+								number = xPlayer.variables.phone_number,
+								time = os.time() * 1000,
+								src = src,
+							}
+							local vehicle = NetworkGetEntityFromNetworkId(sentVehicle)
+							FreezeEntityPosition(vehicle, true)
+							impound[#impound+1] = data
+
+							TriggerClientEvent("police:client:ImpoundVehicle", src, true, fee)
+						end)
+					end
+				end
+			end
+		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:getImpoundVehicles', function()
+	TriggerClientEvent('mdt:client:getImpoundVehicles', source, impound)
+end)
+
+RegisterNetEvent('mdt:server:removeImpound', function(plate, currentSelection)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if xPlayer then
+		if GetJobType(xPlayer.job.name) == 'police' then
+			local result = MySQL.single.await("SELECT plate FROM `owned_vehicles` WHERE plate=:plate LIMIT 1", { plate = string.gsub(plate, "^%s*(.-)%s*$", "%1")})
+			if result then
+				local data = result
+				MySQL.update("DELETE FROM `mdt_impound` WHERE plate=:plate", { plate = data['plate'] })
+				TriggerClientEvent('police:client:TakeOutImpound', src, currentSelection, plate)
+			end
+		end
+	end
+end)
+
+RegisterNetEvent('mdt:server:statusImpound', function(plate)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if xPlayer then
+		if GetJobType(xPlayer.job.name) == 'police' then
+			local vehicle = MySQL.query.await("SELECT plate FROM `owned_vehicles` WHERE plate=:plate LIMIT 1", { plate = string.gsub(plate, "^%s*(.-)%s*$", "%1")})
+			if vehicle and vehicle[1] then
+				local data = vehicle[1]
+				local impoundinfo = MySQL.query.await("SELECT * FROM `mdt_impound` WHERE plate=:plate LIMIT 1", { plate = data['plate'] })
+				if impoundinfo and impoundinfo[1] then
+					TriggerClientEvent('mdt:client:statusImpound', src, impoundinfo[1], plate)
+				end
+			end
+		end
+	end
+end)
+
+RegisterServerEvent("mdt:server:AddLog", function(text)
+	AddLog(text)
+end)
+
+-- Active Units Management
+RegisterNetEvent('mdt:server:toggleActiveUnit', function(identifier, firstname, lastname, callsign, job, grade, department)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if IsPoliceOrEms(xPlayer.job.name) then
+		if not GetActiveData(identifier) then
+			activeUnits[identifier] = {
+				identifier = identifier,
+				firstname = firstname,
+				lastname = lastname,
+				callsign = callsign,
+				job = job,
+				grade = grade,
+				department = department,
+				src = src
+			}
+		else
+			activeUnits[identifier] = nil
+		end
+		TriggerClientEvent('mdt:client:activeUnitsUpdate', -1, activeUnits)
+	end
+end)
+
+-- Mugshots
+ESX.RegisterServerCallback('mdt:server:GetMugShots', function(source, cb, identifier)
+	cb(MugShots[identifier] or {})
+end)
+
+RegisterNetEvent('mdt:server:mugshot', function(identifier, data)
+	local src = source
+	local xPlayer = ESX.GetPlayerFromId(src)
+	if GetJobType(xPlayer.job.name) == 'police' then
+		if not MugShots[identifier] then
+			MugShots[identifier] = {}
+		end
+		MugShots[identifier][#MugShots[identifier]+1] = {
+			image = data,
+			time = os.time() * 1000,
+			author = xPlayer.variables.firstName .. " " .. xPlayer.variables.lastName
+		}
+		TriggerClientEvent('mdt:client:updateMugshots', src, MugShots[identifier])
+	end
+end)
+
 -- Exports
 exports('CreateWeaponInfo', function(serial, imageurl, notes, owner, weapClass, weapModel)
     MySQL.insert.await('INSERT INTO `mdt_weaponinfo` (`serial`, `imageurl`, `notes`, `owner`, `weapClass`, `weapModel`) VALUES (?, ?, ?, ?, ?, ?)', {
         serial, imageurl, notes, owner, weapClass, weapModel
     })
+end)
+
+exports('IsCidFelon', function(identifier, cb)
+	if identifier then
+		local convictions = MySQL.query.await('SELECT charges FROM mdt_convictions WHERE cid=:cid', { cid = identifier })
+		local Charges = {}
+		for i=1, #convictions do
+			local currCharges = json.decode(convictions[i]['charges'])
+			for x=1, #currCharges do
+				Charges[#Charges+1] = currCharges[x]
+			end
+		end
+		local PenalCode = Config.PenalCode
+		for i=1, #Charges do
+			for p=1, #PenalCode do
+				for x=1, #PenalCode[p] do
+					if PenalCode[p][x]['title'] == Charges[i] then
+						if PenalCode[p][x]['class'] == 'Felony' then
+							cb(true)
+							return
+						end
+						break
+					end
+				end
+			end
+		end
+		cb(false)
+	end
 end)
