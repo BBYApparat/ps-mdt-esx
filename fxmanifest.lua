@@ -2,12 +2,15 @@ fx_version 'cerulean'
 game 'gta5'
 
 author 'Flawws, Flakey, Idris and the Project Sloth team'
-description 'NoPixel 4.0 inspired style ps-mdt for QBCore'
+description 'NoPixel 4.0 inspired style ps-mdt for ESX'
 version '2.6.6'
 
 lua54 'yes'
 
-shared_script 'shared/config.lua'
+shared_scripts {
+    'shared/config.lua',
+    'shared.lua'
+}
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
@@ -15,7 +18,8 @@ server_scripts {
     'server/dbm.lua',
     'server/main.lua'
 }
-client_scripts{
+
+client_scripts {
     'client/main.lua',
     'client/cl_impound.lua',
     'client/cl_mugshot.lua'

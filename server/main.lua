@@ -15,15 +15,15 @@ local calls = {}
 --------------------------------
 -- SET YOUR WEBHOOKS IN HERE
 -- Images for mug shots will be uploaded here. Add a Discord webhook. 
-local MugShotWebhook = ''
+local MugShotWebhook = 'https://discord.com/api/webhooks/1303376764386410536/VgtgyX3eDZsFK7Kmqay8egPePQ5lkPnGZs1nbglVtKhsjr9eRL1KLALqO-p0AC9W40i5'
 
 -- Clock-in notifications for duty. Add a Discord webhook.
 -- Command /mdtleaderboard, will display top players per clock-in hours.
-local ClockinWebhook = ''
+local ClockinWebhook = 'https://discord.com/api/webhooks/1303376764386410536/VgtgyX3eDZsFK7Kmqay8egPePQ5lkPnGZs1nbglVtKhsjr9eRL1KLALqO-p0AC9W40i5'
 
 -- Incident and Incident editing. Add a Discord webhook.
 -- Incident Author, Title, and Report will display in webhook post.
-local IncidentWebhook = ''
+local IncidentWebhook = 'https://discord.com/api/webhooks/1303376764386410536/VgtgyX3eDZsFK7Kmqay8egPePQ5lkPnGZs1nbglVtKhsjr9eRL1KLALqO-p0AC9W40i5'
 --------------------------------
 
 ESX.RegisterServerCallback('ps-mdt:server:MugShotWebhook', function(source, cb)
@@ -346,11 +346,13 @@ end)
 RegisterNetEvent('mdt:server:callDragAttach', function(callid, identifier)
 	local src = source
 	local xPlayer = ESX.GetPlayerFromId(src)
+	if not xPlayer then return end
+	
 	local playerdata = {
-		name = xPlayer.variables.firstName.. " "..xPlayer.variables.lastName,
+		name = xPlayer.getName(), -- ESX syntax
 		job = xPlayer.job.name,
 		cid = xPlayer.identifier,
-		callsign = xPlayer.getMeta('callsign') or '000'
+		callsign = xPlayer.getMetadata('callsign') or '000' -- ESX syntax
 	}
 	local callid = tonumber(callid)
 	local JobType = GetJobType(xPlayer.job.name)
@@ -366,9 +368,15 @@ end)
 RegisterNetEvent('mdt:server:setWaypoint:unit', function(identifier)
 	local src = source
 	local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
-	if xPlayer then
-		local PlayerCoords = GetEntityCoords(GetPlayerPed(xPlayer.source))
-		TriggerClientEvent("mdt:client:setWaypoint:unit", src, PlayerCoords)
+	if xPlayer and xPlayer.source then
+		-- Add safety check for valid player ped
+		local playerPed = GetPlayerPed(xPlayer.source)
+		if playerPed and playerPed ~= 0 then
+			local PlayerCoords = GetEntityCoords(playerPed)
+			if PlayerCoords then
+				TriggerClientEvent("mdt:client:setWaypoint:unit", src, PlayerCoords)
+			end
+		end
 	end
 end)
 
@@ -382,13 +390,13 @@ RegisterNetEvent('mdt:server:sendMessage', function(message, time)
 				id = xPlayer.identifier
 			}, function(data)
 				if data == "" then data = nil end
-				local ProfilePicture = ProfPic(xPlayer.variables.sex, data)
-				local callsign = xPlayer.getMeta('callsign') or "000"
+				local ProfilePicture = ProfPic(xPlayer.get('sex'), data) -- ESX syntax
+				local callsign = xPlayer.getMetadata('callsign') or "000" -- ESX syntax
 				local Item = {
 					profilepic = ProfilePicture,
 					callsign = callsign,
 					cid = xPlayer.identifier,
-					name = '('..callsign..') '..xPlayer.variables.firstName.. " "..xPlayer.variables.lastName,
+					name = '('..callsign..') '..xPlayer.getName(), -- ESX syntax
 					message = message,
 					time = time,
 					job = xPlayer.job.name

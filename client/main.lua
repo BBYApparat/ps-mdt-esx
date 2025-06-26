@@ -16,6 +16,13 @@ local lastVeh = nil
 local lastPlate = nil
 
 CreateThread(function()
+    while ESX.GetPlayerData().job == nil do
+        Wait(100)
+    end
+    PlayerData = ESX.GetPlayerData()
+end)
+
+CreateThread(function()
     if GetResourceState('ps-dispatch') == 'started' then
         TriggerServerEvent("ps-mdt:dispatchStatus", true)
     end
@@ -25,7 +32,6 @@ end)
 RegisterNetEvent('esx:playerLoaded')
 AddEventHandler('esx:playerLoaded', function(xPlayer)
     PlayerData = xPlayer
-    callSign = PlayerData.metadata and PlayerData.metadata.callsign or '000'
 end)
 
 RegisterNetEvent('esx:onPlayerLogout')
@@ -33,11 +39,20 @@ AddEventHandler('esx:onPlayerLogout', function()
     TriggerServerEvent("ps-mdt:server:OnPlayerUnload")
     PlayerData = {}
 end)
-
 RegisterNetEvent('esx:setJob')
 AddEventHandler('esx:setJob', function(job)
     PlayerData.job = job
+    if AllowedJob(job.name) then
+        TriggerServerEvent("ps-mdt:server:ToggleDuty")
+        TriggerServerEvent("ps-mdt:server:ClockSystem")
+    end
 end)
+
+function AllowedJob(job)
+    if not job then return false end
+    return Config.AllowedJobs[job] or false
+end
+
 
 RegisterNetEvent("esx:setJob", function(job)
     if AllowedJob(job.name) then
@@ -83,16 +98,6 @@ AddEventHandler('ps-mdt:client:selfregister', function()
         end
     end)
 end)
-
--- Helper Functions
-function AllowedJob(job)
-    for key, _ in pairs(Config.AllowedJobs) do
-        if key == job then
-            return true
-        end
-    end
-    return false
-end
 
 function GetPlayerWeaponInfos(cb)
     ESX.RegisterServerCallback('getWeaponInfo', function(source, cb)
@@ -153,7 +158,7 @@ RegisterCommand("mdt", function()
             if PlayerData.job.onduty then
                 EnableGUI(true)
             else
-                ESX.ShowNotification("You need to be on duty to access the MDT!")
+                EnableGUI(true)
             end
         else
             EnableGUI(true)
@@ -750,15 +755,23 @@ end)
 
 RegisterNUICallback("removeImpound", function(data, cb)
     local ped = PlayerPedId()
-    local playerPos = GetEntityCoords(ped)
-    for k, v in pairs(Config.ImpoundLocations) do
-        if (#(playerPos - vector3(v.x, v.y, v.z)) < 20.0) then
-            TriggerServerEvent('mdt:server:removeImpound', data['plate'], k)
-            break
+    if ped and ped ~= 0 then
+        local playerPos = GetEntityCoords(ped)
+        if playerPos and Config.ImpoundLocations then
+            for k, v in pairs(Config.ImpoundLocations) do
+                if v.x and v.y and v.z then
+                    local distance = #(playerPos - vector3(v.x, v.y, v.z))
+                    if distance < 20.0 then
+                        TriggerServerEvent('mdt:server:removeImpound', data['plate'], k)
+                        break
+                    end
+                end
+            end
         end
     end
     cb('ok')
 end)
+
 
 RegisterNUICallback("statusImpound", function(data, cb)
     TriggerServerEvent('mdt:server:statusImpound', data['plate'])
@@ -787,13 +800,20 @@ RegisterNUICallback("setRadio", function(data, cb)
 end)
 
 RegisterNUICallback('SetHouseLocation', function(data, cb)
-    local coords = {}
-    for word in data.coord[1]:gmatch('[^,%s]+') do
-        coords[#coords+1] = tonumber(word)
+    if data.coord and data.coord[1] then
+        local coords = {}
+        for word in data.coord[1]:gmatch('[^,%s]+') do
+            local num = tonumber(word)
+            if num then
+                coords[#coords+1] = num
+            end
+        end
+        if coords[1] and coords[2] then
+            SetNewWaypoint(coords[1], coords[2])
+            ESX.ShowNotification('GPS has been set!')
+        end
     end
-    SetNewWaypoint(coords[1], coords[2])
-    ESX.ShowNotification('GPS has been set!')
-    cb(true)
+    cb('ok')
 end)
 
 --====================================================================================
