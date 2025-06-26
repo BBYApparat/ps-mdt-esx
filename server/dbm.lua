@@ -90,12 +90,22 @@ function GetPlayerDataById(id)
 end
 
 function GetVehicleOwner(plate)
-	local result = MySQL.scalar.await('SELECT owner FROM owned_vehicles WHERE plate = ?', { plate })
-	if result then
-		local owner = MySQL.scalar.await('SELECT CONCAT(firstname, " ", lastname) as fullname FROM users WHERE identifier = ?', { result })
-		return owner
-	end
-	return nil
+    local result = MySQL.query.await('SELECT plate, owner, id FROM owned_vehicles WHERE plate = @plate', {['@plate'] = plate})
+    if result and result[1] then
+        local identifier = result[1]['owner']
+        local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
+        if xPlayer then
+            local owner = xPlayer.variables.firstName.." "..xPlayer.variables.lastName
+            return owner
+        else
+            -- Player offline, get from database
+            local playerResult = MySQL.query.await('SELECT firstname, lastname FROM users WHERE identifier = @identifier', {['@identifier'] = identifier})
+            if playerResult and playerResult[1] then
+                return playerResult[1]['firstname'].." "..playerResult[1]['lastname']
+            end
+        end
+    end
+    return "Unknown"
 end
 
 function GetVehicleInformation(plate)

@@ -95,7 +95,32 @@ function AllowedJob(job)
 end
 
 function GetPlayerWeaponInfos(cb)
-    ESX.TriggerServerCallback('getWeaponInfo', function(weaponInfos)
+    ESX.RegisterServerCallback('getWeaponInfo', function(source, cb)
+        local xPlayer = ESX.GetPlayerFromId(source)
+        local weaponInfos = {}
+        
+        if Config.InventoryForWeaponsImages == "ox_inventory" then
+            local inv = exports.ox_inventory:GetInventoryItems(source)
+            for _, item in pairs(inv) do
+                if string.find(item.name, "WEAPON_") then
+                    local invImage = ("https://cfx-nui-ox_inventory/web/images/%s.png"):format(item.name)
+                    if invImage then
+                        local weaponInfo = {
+                            serialnumber = item.metadata and item.metadata.serial or "Unknown",
+                            owner = xPlayer.variables.firstName .. " " .. xPlayer.variables.lastName,
+                            weaponmodel = item.label or item.name,
+                            weaponurl = invImage,
+                            notes = "Self Registered",
+                            weapClass = "Class 1",
+                        }
+                        table.insert(weaponInfos, weaponInfo)
+                    end
+                end
+            end
+        else
+            -- For other ESX inventories, you'd need specific handling here
+            -- This is inventory-dependent
+        end
         cb(weaponInfos)
     end)
 end

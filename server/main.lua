@@ -94,14 +94,25 @@ end
 
 function GetWarrantStatus(plate)
     local result = MySQL.query.await("SELECT ov.plate, ov.owner, m.id FROM owned_vehicles ov INNER JOIN mdt_convictions m ON ov.owner = m.cid WHERE m.warrant =1 AND ov.plate =?", {plate})
-	if result and result[1] then
-		local identifier = result[1]['owner']
-		local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
-		local owner = xPlayer and (xPlayer.variables.firstName.." "..xPlayer.variables.lastName) or GetNameFromId(identifier)
-		local incidentId = result[1]['id']
-		return true, owner, incidentId
-	end
-	return false
+    if result and result[1] then
+        local identifier = result[1]['owner']
+        local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
+        local owner
+        if xPlayer then
+            owner = xPlayer.variables.firstName.." "..xPlayer.variables.lastName
+        else
+            -- Player offline, get from database
+            local playerResult = MySQL.query.await('SELECT firstname, lastname FROM users WHERE identifier = @identifier', {['@identifier'] = identifier})
+            if playerResult and playerResult[1] then
+                owner = playerResult[1]['firstname'].." "..playerResult[1]['lastname']
+            else
+                owner = "Unknown"
+            end
+        end
+        local incidentId = result[1]['id']
+        return true, owner, incidentId
+    end
+    return false
 end
 
 function GetVehicleInformation(plate)
@@ -114,13 +125,22 @@ function GetVehicleInformation(plate)
 end
 
 function GetVehicleOwner(plate)
-	local result = MySQL.query.await('SELECT plate, owner FROM owned_vehicles WHERE plate = @plate', {['@plate'] = plate})
-	if result and result[1] then
-		local identifier = result[1]['owner']
-		local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
-		local owner = xPlayer and (xPlayer.variables.firstName.." "..xPlayer.variables.lastName) or GetNameFromId(identifier)
-		return owner
-	end
+    local result = MySQL.query.await('SELECT plate, owner, id FROM owned_vehicles WHERE plate = @plate', {['@plate'] = plate})
+    if result and result[1] then
+        local identifier = result[1]['owner']
+        local xPlayer = ESX.GetPlayerFromIdentifier(identifier)
+        if xPlayer then
+            local owner = xPlayer.variables.firstName.." "..xPlayer.variables.lastName
+            return owner
+        else
+            -- Player offline, get from database
+            local playerResult = MySQL.query.await('SELECT firstname, lastname FROM users WHERE identifier = @identifier', {['@identifier'] = identifier})
+            if playerResult and playerResult[1] then
+                return playerResult[1]['firstname'].." "..playerResult[1]['lastname']
+            end
+        end
+    end
+    return "Unknown"
 end
 
 if Config.UseWolfknightRadar == true then
@@ -1182,6 +1202,27 @@ local function isRequestVehicle(vehId)
 	return found
 end
 exports('isRequestVehicle', isRequestVehicle)
+
+local function giveCitationItem(src, identifier, fine, incidentId)
+    local targetPlayer = ESX.GetPlayerFromIdentifier(identifier)
+    if not targetPlayer then return end
+    
+    local PlayerName = targetPlayer.variables.firstName .. ' ' .. targetPlayer.variables.lastName
+    local Officer = ESX.GetPlayerFromId(src)
+    local callsign = Officer.getMeta('callsign') or '000'
+    local OfficerFullName = '(' .. callsign .. ') ' .. Officer.variables.firstName .. ' ' .. Officer.variables.lastName
+    
+    local info = {
+        identifier = identifier,
+        fine = "$"..fine,
+        date = os.date("%Y-%m-%d %H:%M"),
+        incidentId = "#"..incidentId,
+        officer = OfficerFullName,
+    }
+    
+    targetPlayer.addInventoryItem('mdtcitation', 1, false, info)
+    TriggerClientEvent('esx:showNotification', src, PlayerName.." (" ..identifier.. ") received a citation!")
+end
 
 RegisterNetEvent('mdt:server:impoundVehicle', function(sentInfo, sentVehicle)
 	local src = source
