@@ -1,4 +1,4 @@
--- ESX VERSION - client/main.lua (Complete)
+-- ESX VERSION - client/main.lua (Complete Fixed)
 ESX = exports["es_extended"]:getSharedObject()
 local PlayerData = {}
 local CurrentCops = 0
@@ -39,6 +39,7 @@ AddEventHandler('esx:onPlayerLogout', function()
     TriggerServerEvent("ps-mdt:server:OnPlayerUnload")
     PlayerData = {}
 end)
+
 RegisterNetEvent('esx:setJob')
 AddEventHandler('esx:setJob', function(job)
     PlayerData.job = job
@@ -52,7 +53,6 @@ function AllowedJob(job)
     if not job then return false end
     return Config.AllowedJobs[job] or false
 end
-
 
 RegisterNetEvent("esx:setJob", function(job)
     if AllowedJob(job.name) then
@@ -130,6 +130,21 @@ function GetPlayerWeaponInfos(cb)
     end)
 end
 
+-- Helper function to get vehicle name for ESX
+function GetVehicleName(vehicleModel)
+    if not vehicleModel then return "Unknown Vehicle" end
+    
+    -- Try to get the display name
+    local displayName = GetDisplayNameFromVehicleModel(vehicleModel)
+    
+    -- If no display name found, return the model name
+    if displayName == "CARNOTFOUND" or displayName == vehicleModel then
+        return vehicleModel
+    end
+    
+    return displayName
+end
+
 --====================================================================================
 ------------------------------------------
 --               MAIN PAGE              --
@@ -137,13 +152,33 @@ end
 --====================================================================================
 
 function EnableGUI(enable)
-    SetNuiFocus(enable, enable)
     if enable then
+        SetNuiFocus(true, true)
         isOpen = true
-        SendNUIMessage({ type = "show" })
+        
+        -- FIXED: Send the correct message structure that JavaScript expects
+        SendNUIMessage({ 
+            type = "show",
+            enable = true,  -- ← THIS WAS MISSING!
+            -- Add these required data that JS expects:
+            rosterLink = Config.RosterLink[PlayerData.job.name] or "",
+            sopLink = Config.sopLink[PlayerData.job.name] or "",
+            job = PlayerData.job.name,
+            jobType = GetJobType(PlayerData.job.name)
+        })
+        
+        print("^2[ps-mdt] UI Opened with correct message structure^0")
     else
+        SetNuiFocus(false, false)
         isOpen = false
-        SendNUIMessage({ type = "hide" })
+        
+        -- FIXED: Send correct hide message  
+        SendNUIMessage({ 
+            type = "show",
+            enable = false  -- ← THIS TELLS JS TO HIDE
+        })
+        
+        print("^1[ps-mdt] UI Closed^0")
     end
 end
 
@@ -152,18 +187,39 @@ function RefreshGUI()
 end
 
 RegisterCommand("mdt", function()
+    print("^3[ps-mdt] MDT command executed^0") -- Debug line
+    
     local PlayerData = ESX.GetPlayerData()
+    
+    if not PlayerData then
+        print("^1[ps-mdt] PlayerData is nil^0")
+        return
+    end
+    
+    if not PlayerData.job then
+        print("^1[ps-mdt] PlayerData.job is nil^0")
+        return
+    end
+    
+    print("^3[ps-mdt] Current job:^0 " .. tostring(PlayerData.job.name))
+    
     if AllowedJob(PlayerData.job.name) then
+        print("^2[ps-mdt] Job is allowed, checking duty status^0")
+        
         if Config.OnlyShowOnDuty then
             if PlayerData.job.onduty then
+                print("^2[ps-mdt] Player is on duty, opening MDT^0")
                 EnableGUI(true)
             else
-                EnableGUI(true)
+                print("^1[ps-mdt] Player is not on duty^0")
+                ESX.ShowNotification("You must be on duty to access the MDT!")
             end
         else
+            print("^2[ps-mdt] Duty not required, opening MDT^0")
             EnableGUI(true)
         end
     else
+        print("^1[ps-mdt] Job not allowed:^0 " .. tostring(PlayerData.job.name))
         ESX.ShowNotification("You don't have access to the MDT!")
     end
 end)
@@ -340,6 +396,76 @@ RegisterNUICallback("deleteIncident", function(data, cb)
     cb(true)
 end)
 
+RegisterNUICallback("getAllIncidents", function(data, cb)
+    ESX.TriggerServerCallback('mdt:server:getAllIncidents', function(result)
+        SendNUIMessage({ type = "incidents", data = result })
+    end)
+    cb(true)
+end)
+
+-- FIXED: Reports refresh system  
+RegisterNUICallback("getAllReports", function(data, cb)
+    ESX.TriggerServerCallback('mdt:server:getAllReports', function(result)
+        SendNUIMessage({ type = "getAllReports", data = result })
+    end)
+    cb(true)
+end)
+
+-- FIXED: Enhanced save incident with auto-refresh
+RegisterNUICallback("saveIncident", function(data, cb)
+    TriggerServerEvent('mdt:server:saveIncident', data.ID, data.title, data.information, data.tags, data.officers, data.civilians, data.evidence, data.associated, data.time)
+    
+    -- Auto-refresh incidents list after saving
+    Wait(500) -- Small delay to ensure save completes
+    ESX.TriggerServerCallback('mdt:server:getAllIncidents', function(result)
+        SendNUIMessage({ type = "incidents", data = result })
+        print("^2[MDT] Incidents list refreshed after save^0")
+    end)
+    
+    cb(true)
+end)
+
+-- FIXED: Enhanced new incident with auto-refresh
+RegisterNUICallback("newIncident", function(data, cb)
+    local existing = data.existing
+    local id = data.id
+    local title = data.title
+    local details = data.details
+    local tags = data.tags
+    local officers = data.officers
+    local civilians = data.civilians
+    local evidence = data.evidence
+    local time = data.time
+    
+    TriggerServerEvent('mdt:server:newIncident', existing, id, title, details, tags, officers, civilians, evidence, time)
+    
+    -- Auto-refresh incidents list after creating
+    Wait(500)
+    ESX.TriggerServerCallback('mdt:server:getAllIncidents', function(result)
+        SendNUIMessage({ type = "incidents", data = result })
+        print("^2[MDT] Incidents list refreshed after creation^0")
+    end)
+    
+    cb(true)
+end)
+
+RegisterNUICallback("newBolo", function(data, cb)
+    local existing = data.existing
+    local id = data.id
+    local title = data.title
+    local plate = data.plate
+    local owner = data.owner
+    local individual = data.individual
+    local detail = data.detail
+    local tags = data.tags
+    local gallery = data.gallery
+    local officers = data.officers
+    local time = data.time
+    
+    TriggerServerEvent('mdt:server:newBolo', existing, id, title, plate, owner, individual, detail, tags, gallery, officers, time)
+    cb(true)
+end)
+
 RegisterNetEvent('mdt:client:getIncidents', function(sentData)
     SendNUIMessage({ type = "incidents", data = sentData })
 end)
@@ -362,18 +488,17 @@ end)
 ------------------------------------------
 --====================================================================================
 
+-- FIXED: Search vehicles function for ESX
 RegisterNUICallback("searchVehicles", function(data, cb)
     local p = promise.new()
     ESX.TriggerServerCallback('mdt:server:searchVehicles', function(result)
         for i=1, #result do
             result[i]['plate'] = string.upper(result[i]['plate'])
             if result[i]['vehicle'] and result[i]['vehicle'] ~= '' then
-                local vehData = ESX.GetVehicleType(result[i]['vehicle'])
-                if vehData then
-                    result[i]['model'] = vehData.name or result[i]['vehicle']
-                else
-                    result[i]['model'] = "UNKNOWN"
-                end
+                -- FIXED: Use proper vehicle name function for ESX
+                result[i]['model'] = GetVehicleName(result[i]['vehicle'])
+            else
+                result[i]['model'] = "UNKNOWN"
             end
         end
         p:resolve(result)
@@ -440,19 +565,21 @@ RegisterNUICallback("saveVehicleInfo", function(data, cb)
     cb(true)
 end)
 
+-- FIXED: Get vehicle data event for ESX
 RegisterNetEvent('mdt:client:getVehicleData', function(sentData)
     if sentData and sentData[1] then
         local vehicle = sentData[1]
-        local vehData = json.decode(vehicle['vehicle'])
         vehicle['color'] = Config.ColorInformation[vehicle['color1']]
         vehicle['colorName'] = Config.ColorNames[vehicle['color1']]
-        local vehName = ESX.GetVehicleType(vehicle.vehicle)
-        if vehName then
-            vehicle.model = vehName.name
+        
+        -- FIXED: Use proper vehicle name function for ESX
+        if vehicle.vehicle then
+            vehicle.model = GetVehicleName(vehicle.vehicle)
         else
             vehicle.model = "Unknown Vehicle"
         end
-        vehicle['class'] = Config.ClassList[GetVehicleClassFromName(vehicle['vehicle'])]
+        
+        vehicle['class'] = Config.ClassList[GetVehicleClassFromName(vehicle['vehicle'])] or 'Unknown'
         vehicle['vehicle'] = nil
         SendNUIMessage({ type = "getVehicleData", data = vehicle })
     end
@@ -584,23 +711,6 @@ end)
 RegisterNUICallback("getBoloData", function(data, cb)
     local id = data.id
     TriggerServerEvent('mdt:server:getBoloData', id)
-    cb(true)
-end)
-
-RegisterNUICallback("newBolo", function(data, cb)
-    local existing = data.existing
-    local id = data.id
-    local title = data.title
-    local plate = data.plate
-    local owner = data.owner
-    local individual = data.individual
-    local detail = data.detail
-    local tags = data.tags
-    local gallery = data.gallery
-    local officers = data.officers
-    local time = data.time
-
-    TriggerServerEvent('mdt:server:newBolo', existing, id, title, plate, owner, individual, detail, tags, gallery, officers, time)
     cb(true)
 end)
 
@@ -771,7 +881,6 @@ RegisterNUICallback("removeImpound", function(data, cb)
     end
     cb('ok')
 end)
-
 
 RegisterNUICallback("statusImpound", function(data, cb)
     TriggerServerEvent('mdt:server:statusImpound', data['plate'])

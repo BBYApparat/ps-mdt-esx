@@ -2,7 +2,7 @@ Config = Config or {}
 
 Config.UsingPsHousing = false
 Config.UsingDefaultQBApartments = false
-Config.OnlyShowOnDuty = true
+Config.OnlyShowOnDuty = false
 Config.UseCQCMugshot = false
 
 -- Front, Back Side. Use 4 for both sides, we recommend leaving at 1 for default.
